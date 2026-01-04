@@ -33,6 +33,8 @@ from lerobot.policies.act.modeling_act import (
     create_sinusoidal_pos_embedding,
 )
 
+from vision import make_vision_encoder
+
 from .configuration_rewact import RewACTConfig
 
 
@@ -99,19 +101,20 @@ class RewACTPolicy(PreTrainedPolicy):
     def get_optim_params(self) -> dict:
         # TODO(aliberts, rcadene): As of now, lr_backbone == lr
         # Should we remove this and just `return self.parameters()`?
+        backbone_prefixes = ("model.vision_encoder", "model.backbone")
         return [
             {
                 "params": [
                     p
                     for n, p in self.named_parameters()
-                    if not n.startswith("model.backbone") and p.requires_grad
+                    if not n.startswith(backbone_prefixes) and p.requires_grad
                 ]
             },
             {
                 "params": [
                     p
                     for n, p in self.named_parameters()
-                    if n.startswith("model.backbone") and p.requires_grad
+                    if n.startswith(backbone_prefixes) and p.requires_grad
                 ],
                 "lr": self.config.optimizer_lr_backbone,
             },
@@ -306,17 +309,9 @@ class RewACT(nn.Module):
                 create_sinusoidal_pos_embedding(num_input_token_encoder, config.dim_model).unsqueeze(0),
             )
 
-        # Backbone for image feature extraction.
+        # Vision encoder for image feature extraction.
         if self.config.image_features:
-            backbone_model = getattr(torchvision.models, config.vision_backbone)(
-                replace_stride_with_dilation=[False, False, config.replace_final_stride_with_dilation],
-                weights=config.pretrained_backbone_weights,
-                norm_layer=FrozenBatchNorm2d,
-            )
-            # Note: The assumption here is that we are using a ResNet model (and hence layer4 is the final
-            # feature map).
-            # Note: The forward method of this returns a dict: {"feature_map": output}.
-            self.backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
+            self.vision_encoder = make_vision_encoder(config)
 
         # Transformer (acts as VAE decoder when training with the variational objective).
         self.encoder = ACTEncoder(config)
@@ -333,10 +328,6 @@ class RewACT(nn.Module):
                 self.config.env_state_feature.shape[0], config.dim_model
             )
         self.encoder_latent_input_proj = nn.Linear(config.latent_dim, config.dim_model)
-        if self.config.image_features:
-            self.encoder_img_feat_input_proj = nn.Conv2d(
-                backbone_model.fc.in_features, config.dim_model, kernel_size=1
-            )
         # Transformer encoder positional embeddings.
         n_1d_tokens = 1  # for the latent
         if self.config.robot_state_feature:
@@ -344,8 +335,6 @@ class RewACT(nn.Module):
         if self.config.env_state_feature:
             n_1d_tokens += 1
         self.encoder_1d_feature_pos_embed = nn.Embedding(n_1d_tokens, config.dim_model)
-        if self.config.image_features:
-            self.encoder_cam_feat_pos_embed = ACTSinusoidalPositionEmbedding2d(config.dim_model // 2)
 
         # Transformer decoder.
         # Learnable positional embedding for the transformer's decoder (in the style of DETR object queries).
@@ -471,22 +460,19 @@ class RewACT(nn.Module):
             )
 
         if self.config.image_features:
-            # For a list of images, the H and W may vary but H*W is constant.
-            # NOTE: If modifying this section, verify on MPS devices that
-            # gradients remain stable (no explosions or NaNs).
-            for img in batch[OBS_IMAGES]:
-                cam_features = self.backbone(img)["feature_map"]
-                cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
-                cam_features = self.encoder_img_feat_input_proj(cam_features)
+            # Process images through vision encoder
+            # Vision encoder returns (tokens, pos_tokens) in (S, B, D) format
+            for cam_idx, img in enumerate(batch[OBS_IMAGES]):
+                # For VJEPA2: stack past + current frame if available
+                if self.config.vision_encoder_type == "vjepa2" and "observation.images_past" in batch:
+                    past_img = batch["observation.images_past"][cam_idx]
+                    img = torch.stack([past_img, img], dim=2)  # (B, 3, 2, H, W)
 
-                # Rearrange features to (sequence, batch, dim).
-                cam_features = einops.rearrange(cam_features, "b c h w -> (h w) b c")
-                cam_pos_embed = einops.rearrange(cam_pos_embed, "b c h w -> (h w) b c")
+                img_tokens, img_pos_tokens = self.vision_encoder(img, cam_idx=cam_idx)
 
                 # Extend immediately instead of accumulating and concatenating
-                # Convert to list to extend properly
-                encoder_in_tokens.extend(list(cam_features))
-                encoder_in_pos_embed.extend(list(cam_pos_embed))
+                encoder_in_tokens.extend(list(img_tokens))
+                encoder_in_pos_embed.extend(list(img_pos_tokens))
 
         # Stack all tokens along the sequence dimension.
         encoder_in_tokens = torch.stack(encoder_in_tokens, axis=0)
