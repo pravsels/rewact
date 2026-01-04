@@ -1,0 +1,39 @@
+# Training configuration for SAM3 action-focused run
+dataset:
+  repo_id:
+    - villekuosmanen/build_block_tower
+    - villekuosmanen/dAgger_build_block_tower_1.0.0
+    - villekuosmanen/dAgger_build_block_tower_1.1.0
+    - villekuosmanen/dAgger_build_block_tower_1.2.0
+    - villekuosmanen/dAgger_build_block_tower_1.3.0
+    - villekuosmanen/dAgger_build_block_tower_1.4.0
+    - villekuosmanen/fail_build_block_tower_stationary
+    - villekuosmanen/fail_build_block_tower_autonomous_interaction
+  image_transforms:
+    enable: true
+
+policy:
+  type: rewact
+  vision_encoder_type: sam3
+  n_decoder_layers: 4
+  n_action_steps: 50
+  reward_loss_weight: 0.1
+  push_to_hub: false 
+  
+  sam3:
+    variant: vit_l
+    pos_embed_type: act_sinusoidal
+
+batch_size: 128
+num_workers: 0
+steps: 400000
+job_name: &name rewact_sam3_action
+log_freq: 100
+save_freq: 5000
+eval_freq: -1
+wandb:
+  enable: true
+  project: *name
+  entity: pravsels
+  mode: offline
+
