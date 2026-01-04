@@ -1,0 +1,43 @@
+
+# Model weights (mounted at runtime)
+**/*.pt
+**/*.pth
+**/*.safetensors
+**/*.ckpt
+**/*.bin
+
+# Training outputs
+**/outputs/
+
+# Media files
+**/*.mp4
+**/*.gif
+**/*.avi
+**/*.mov
+**/videos/
+
+# Python artifacts
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.egg-info/
+**/.eggs/
+**/dist/
+**/build/
+
+# Git (this is likely the 11GB culprit!)
+**/.git/
+
+# Dev/IDE
+**/.vscode/
+**/.idea/
+**/*.swp
+**/*.swo
+
+# Logs
+**/logs/
+**/*.log
+
+# Misc
+**/.DS_Store
+**/Thumbs.db
