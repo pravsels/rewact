@@ -40,7 +40,8 @@ COPY lerobot_policy_rewact /workspace/lerobot_policy_rewact
 # Install all packages in editable mode (lerobot>=0.4 installed as dependency)
 # Also install common dependencies in one go
 RUN python -m pip install \
-    safetensors>=0.7.0 \
+    "safetensors>=0.7.0" \
+    "numpy<2" \
     wandb \
     pycocotools \
     opencv-python==4.10.0.84 \
@@ -52,6 +53,10 @@ RUN python -m pip install \
     && python -m pip install -v -e /workspace/rewact_tools \
     && python -m pip install -v -e /workspace/lerobot_policy_rewact
 
-WORKDIR /workspace
+# Final fix for binary incompatibility: uninstall pre-built pycocotools and force source-build against numpy<2
+RUN python -m pip uninstall -y pycocotools && \
+    python -m pip install pycocotools --no-binary pycocotools
+
+WORKDIR /workspace/repo
 
 CMD ["/bin/bash"]

@@ -13,6 +13,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""
+Quickstart:
+    Fresh start local:
+        python scripts/train.py --config=configs/train_sam3.yaml --policy.device=cuda --batch_size=1 --policy.sam3.weights=weights/sam3.pt --output_dir=outputs/train/rewact_sam3_action
+
+    Resume local:
+        python scripts/train.py --config=configs/train_sam3.yaml --policy.device=cuda --batch_size=1 --resume=true --checkpoint_path=outputs/train/rewact_sam3_action/checkpoints/last --output_dir=outputs/train/rewact_sam3_action
+"""
 import logging
 import time
 from contextlib import nullcontext
@@ -125,7 +133,10 @@ def train(cfg: TrainPipelineConfig):
     # cfg.dataset.video_backend = "pyav"
 
     sampler_config = load_sampler_config("scripts/configs/sampler_rewact.json")
-    cfg.dataset.episodes = sampler_config.episodes
+    if sampler_config:
+        cfg.dataset.episodes = sampler_config.episodes
+    else:
+        logging.warning("Sampler config not found. Proceeding without specific episode filtering.")
 
     # Check device is available
     device = get_safe_torch_device(cfg.policy.device, log=True)
