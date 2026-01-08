@@ -189,4 +189,3 @@ class DinoV3VisionEncoder(VisionEncoder):
             )
 
         return tokens, pos_tokens
-

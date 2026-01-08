@@ -160,4 +160,3 @@ class VJepa2VisionEncoder(VisionEncoder):
         )
 
         return tokens, pos_tokens
-

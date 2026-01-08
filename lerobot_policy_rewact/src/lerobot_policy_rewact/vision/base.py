@@ -55,4 +55,3 @@ def _infer_pos_base_hw(config, *, vit_patch_size: int) -> tuple[int, int]:
                 
     # Fallback that works well for 480×640 with patch=16 (30×40).
     return (30, 40)
-

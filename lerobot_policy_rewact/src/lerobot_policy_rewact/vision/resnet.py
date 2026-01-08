@@ -51,4 +51,3 @@ class ResNetVisionEncoder(VisionEncoder):
         tokens = einops.rearrange(feat, "b c h w -> (h w) b c")
         pos_tokens = einops.rearrange(pos, "b c h w -> (h w) b c")
         return tokens, pos_tokens
-

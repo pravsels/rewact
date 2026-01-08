@@ -19,23 +19,21 @@ import einops
 import torch
 import torch.nn.functional as F  # noqa: N812
 import torchvision
+from lerobot.policies.act.modeling_act import (
+    ACTDecoder,
+    ACTEncoder,
+    ACTSinusoidalPositionEmbedding2d,
+    ACTTemporalEnsembler,
+    create_sinusoidal_pos_embedding,
+)
+from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.utils.constants import ACTION, OBS_ENV_STATE, OBS_IMAGES, OBS_STATE
 from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
-from lerobot.utils.constants import ACTION, OBS_IMAGES, OBS_STATE, OBS_ENV_STATE
-from lerobot.policies.pretrained import PreTrainedPolicy
-from lerobot.policies.act.modeling_act import (
-    ACTTemporalEnsembler,
-    ACTEncoder,
-    ACTDecoder,
-    ACTSinusoidalPositionEmbedding2d,
-    create_sinusoidal_pos_embedding,
-)
-
-from vision import make_vision_encoder
-
 from .configuration_rewact import RewACTConfig
+from .vision import make_vision_encoder
 
 
 class RewACTPolicy(PreTrainedPolicy):
@@ -174,6 +172,11 @@ class RewACTPolicy(PreTrainedPolicy):
         if self.config.image_features:
             batch = dict(batch)
             batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
+            # Past images for VJEPA2 temporal context
+            if self.config.vision_encoder_type == "vjepa2":
+                past_keys = [k.replace("observation.images.", "observation.images_past.") for k in self.config.image_features]
+                if all(k in batch for k in past_keys):
+                    batch["observation.images_past"] = [batch[k] for k in past_keys]
 
         actions, reward_output, _ = self.model(batch)
         return actions, reward_output
@@ -183,6 +186,11 @@ class RewACTPolicy(PreTrainedPolicy):
         if self.config.image_features:
             batch = dict(batch)
             batch[OBS_IMAGES] = [batch[key] for key in self.config.image_features]
+            # Past images for VJEPA2 temporal context
+            if self.config.vision_encoder_type == "vjepa2":
+                past_keys = [k.replace("observation.images.", "observation.images_past.") for k in self.config.image_features]
+                if all(k in batch for k in past_keys):
+                    batch["observation.images_past"] = [batch[k] for k in past_keys]
 
         actions_hat, reward_output, (mu_hat, log_sigma_x2_hat) = self.model(batch)
 
@@ -309,7 +317,11 @@ class RewACT(nn.Module):
                 create_sinusoidal_pos_embedding(num_input_token_encoder, config.dim_model).unsqueeze(0),
             )
 
+<<<<<<< HEAD
         # Vision encoder for image feature extraction.
+=======
+        ## Vision encoder (image -> encoder tokens).
+>>>>>>> main
         if self.config.image_features:
             self.vision_encoder = make_vision_encoder(config)
 
@@ -370,21 +382,20 @@ class RewACT(nn.Module):
     def forward(self, batch: dict[str, Tensor]) -> tuple[Tensor, tuple[Tensor, Tensor] | tuple[None, None]]:
         """A forward pass through the Action Chunking Transformer (with optional VAE encoder).
 
-        `batch` should have the following structure:
-        {
-            [robot_state_feature] (optional): (B, state_dim) batch of robot states.
-
-            [image_features]: (B, n_cameras, C, H, W) batch of images.
-                AND/OR
-            [env_state_feature]: (B, env_dim) batch of environment states.
-
-            [action_feature] (optional, only if training with VAE): (B, chunk_size, action dim) batch of actions.
-        }
-
+        Expected `batch` keys (actual keys used by this implementation):
+        Inputs (inference + training):
+        - "observation.state": (B, state_dim) robot proprioceptive state. Required if `config.robot_state_feature` is set.
+        - "observation.images": optional, list of camera tensors, each (B, C, H, W). Present when using vision inputs.
+          Note: `RewACTPolicy` constructs this from per-camera keys like "observation.images.top", etc.
+        - "observation.environment_state": optional, (B, env_dim). Present when using env-state inputs.
+        Training-only (needed when `config.use_vae` and `self.training` is True):
+        - "action": (B, chunk_size, action_dim) action chunk used by the VAE encoder.
+        - "action_is_pad": (B, chunk_size) boolean padding mask for the action sequence (True means pad).
+        
         Returns:
-            (B, chunk_size, action_dim) batch of action sequences
-            Tuple containing the latent PDF's parameters (mean, log(σ²)) both as (B, L) tensors where L is the
-            latent dimension.
+        - actions: (B, chunk_size, action_dim)
+        - reward_preds: (B, 1, 1) if `config.use_reward_head` else None (only predicts reward for the first step)
+        - (mu, log_sigma_x2): both (B, latent_dim) if using VAE in training, else (None, None)
         """
         if self.config.use_vae and self.training:
             assert ACTION in batch, (
@@ -448,48 +459,47 @@ class RewACT(nn.Module):
             )
 
         # Prepare transformer encoder inputs.
-        encoder_in_tokens = [self.encoder_latent_input_proj(latent_sample)]
-        encoder_in_pos_embed = list(self.encoder_1d_feature_pos_embed.weight.unsqueeze(1))
+        encoder_input_tokens = [self.encoder_latent_input_proj(latent_sample)]
+        encoder_input_pos_embeds = list(self.encoder_1d_feature_pos_embed.weight.unsqueeze(1))
         # Robot state token.
         if self.config.robot_state_feature:
-            encoder_in_tokens.append(self.encoder_robot_state_input_proj(batch[OBS_STATE]))
+            encoder_input_tokens.append(self.encoder_robot_state_input_proj(batch[OBS_STATE]))
         # Environment state token.
         if self.config.env_state_feature:
-            encoder_in_tokens.append(
+            encoder_input_tokens.append(
                 self.encoder_env_state_input_proj(batch[OBS_ENV_STATE])
             )
 
         if self.config.image_features:
-            # Process images through vision encoder
-            # Vision encoder returns (tokens, pos_tokens) in (S, B, D) format
-            for cam_idx, img in enumerate(batch[OBS_IMAGES]):
-                # For VJEPA2: stack past + current frame if available
+            # For a list of images, the H and W may vary but H*W is constant.
+            # NOTE: If modifying this section, verify on MPS devices that
+            # gradients remain stable (no explosions or NaNs).
+            for cam_idx, img in enumerate(batch["observation.images"]):
+                # For VJEPA2: stack past + current frame into video tensor
                 if self.config.vision_encoder_type == "vjepa2" and "observation.images_past" in batch:
                     past_img = batch["observation.images_past"][cam_idx]
                     img = torch.stack([past_img, img], dim=2)  # (B, 3, 2, H, W)
-
                 img_tokens, img_pos_tokens = self.vision_encoder(img, cam_idx=cam_idx)
-
-                # Extend immediately instead of accumulating and concatenating
-                encoder_in_tokens.extend(list(img_tokens))
-                encoder_in_pos_embed.extend(list(img_pos_tokens))
+                # Extend immediately instead of accumulating and concatenating.
+                encoder_input_tokens.extend(list(img_tokens))
+                encoder_input_pos_embeds.extend(list(img_pos_tokens))
 
         # Stack all tokens along the sequence dimension.
-        encoder_in_tokens = torch.stack(encoder_in_tokens, axis=0)
-        encoder_in_pos_embed = torch.stack(encoder_in_pos_embed, axis=0)
+        encoder_input_tokens = torch.stack(encoder_input_tokens, axis=0)
+        encoder_input_pos_embeds = torch.stack(encoder_input_pos_embeds, axis=0)
 
         # Forward pass through the transformer modules.
-        encoder_out = self.encoder(encoder_in_tokens, pos_embed=encoder_in_pos_embed)
+        encoder_out = self.encoder(encoder_input_tokens, pos_embed=encoder_input_pos_embeds)
         # TODO(rcadene, alexander-soare): remove call to `device` ; precompute and use buffer
         decoder_in = torch.zeros(
             (self.config.chunk_size, batch_size, self.config.dim_model),
-            dtype=encoder_in_pos_embed.dtype,
-            device=encoder_in_pos_embed.device,
+            dtype=encoder_input_pos_embeds.dtype,
+            device=encoder_input_pos_embeds.device,
         )
         decoder_out = self.decoder(
             decoder_in,
             encoder_out,
-            encoder_pos_embed=encoder_in_pos_embed,
+            encoder_pos_embed=encoder_input_pos_embeds,
             decoder_pos_embed=self.decoder_pos_embed.weight.unsqueeze(1),
         )
 
@@ -515,3 +525,4 @@ class RewACT(nn.Module):
         }
 
         return actions, reward_output, (mu, log_sigma_x2)
+
