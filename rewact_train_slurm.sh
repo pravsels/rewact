@@ -46,6 +46,12 @@ else
         --policy.sam3.weights=${data_dir}/weights/sam3.pt"
 fi
 
+# Package Overlay Path (on scratch)
+PYTHON_EXT_DIR="${data_dir}/python_packages"
+# Ensure it's passed to the container
+EXPORT_VARS="export PYTHONPATH=${PYTHON_EXT_DIR}:${repo_dir}:\$PYTHONPATH"
+EXPORT_VARS="${EXPORT_VARS} && export LD_LIBRARY_PATH=${PYTHON_EXT_DIR}/torch/lib:\$LD_LIBRARY_PATH"
+
 srun --ntasks=1 --gpus-per-task=1 --cpu-bind=cores \
 apptainer exec --nv \
     --pwd "${repo_dir}" \
@@ -53,7 +59,7 @@ apptainer exec --nv \
     --bind "${HF_CACHE}:/root/.cache/huggingface" \
     --env "HF_HOME=/root/.cache/huggingface" \
     "${container}" \
-    bash -c "export PYTHONPATH=${repo_dir}:\$PYTHONPATH && ${TRAIN_CMD}"
+    bash -c "${EXPORT_VARS} && ${TRAIN_CMD}"
 
 end_time="$(date -Is --utc)"
 echo
