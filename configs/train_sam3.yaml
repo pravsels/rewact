@@ -26,7 +26,7 @@ policy:
     pos_embed_type: act_sinusoidal
 
 batch_size: 128
-num_workers: 12
+num_workers: 0
 steps: 400000
 job_name: &name rewact_sam3_action
 log_freq: 100
