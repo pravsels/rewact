@@ -15,8 +15,26 @@ RUN apt-get update && \
 
 WORKDIR /workspace
 
-# Install lerobot and common deps (numpy<2 first to avoid pyarrow incompatibility)
-RUN python -m pip install "numpy<2"
+# Install stable external dependencies first (to maximize caching)
+# We install these BEFORE copying local code so that code changes don't trigger re-installs.
+# We also include "numpy<2" here to ensure all subsequent builds (like decord) use the correct version.
+RUN python -m pip install \
+    "numpy<2" \
+    "safetensors>=0.7.0" \
+    "lerobot>=0.4" \
+    wandb \
+    opencv-python==4.10.0.84 \
+    av \
+    draccus \
+    tqdm \
+    einops \
+    scipy \
+    timm \
+    ftfy \
+    regex \
+    iopath \
+    huggingface_hub \
+    robocandywrapper
 
 # Build/Install decord from source for arm64, or from pip for amd64
 ARG TARGETARCH
@@ -31,31 +49,23 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
         python -m pip install decord; \
     fi
 
-# Copy packages first (before installing dependencies to use Docker layer caching)
+
+# Final fix for binary incompatibility: uninstall pre-built pycocotools and force source-build against numpy<2
+RUN python -m pip uninstall -y pycocotools && \
+    python -m pip install pycocotools --no-binary pycocotools
+
+# Now copy local repository packages
 COPY sam3 /workspace/sam3
 COPY vision /workspace/vision
 COPY rewact_tools /workspace/rewact_tools
 COPY lerobot_policy_rewact /workspace/lerobot_policy_rewact
 
-# Install all packages in editable mode (lerobot>=0.4 installed as dependency)
-# Also install common dependencies in one go
-RUN python -m pip install \
-    "safetensors>=0.7.0" \
-    "numpy<2" \
-    wandb \
-    pycocotools \
-    opencv-python==4.10.0.84 \
-    av \
-    draccus \
-    tqdm \
-    && python -m pip install -v -e /workspace/sam3 \
-    && python -m pip install -v -e /workspace/vision \
-    && python -m pip install -v -e /workspace/rewact_tools \
-    && python -m pip install -v -e /workspace/lerobot_policy_rewact
-
-# Final fix for binary incompatibility: uninstall pre-built pycocotools and force source-build against numpy<2
-RUN python -m pip uninstall -y pycocotools && \
-    python -m pip install pycocotools --no-binary pycocotools
+# Install local packages in editable mode WITHOUT dependencies to protect GPU PyTorch
+# This step is last and very fast, so code changes are cheap.
+RUN python -m pip install --no-deps -v -e /workspace/sam3 && \
+    python -m pip install --no-deps -v -e /workspace/vision && \
+    python -m pip install --no-deps -v -e /workspace/rewact_tools && \
+    python -m pip install --no-deps -v -e /workspace/lerobot_policy_rewact
 
 WORKDIR /workspace/repo
 
