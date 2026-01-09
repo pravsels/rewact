@@ -16,7 +16,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from vision import make_vision_encoder
+from lerobot_policy_rewact.vision import make_vision_encoder
 from lerobot.configs.types import FeatureType, PolicyFeature
 
 
@@ -245,7 +245,7 @@ def main() -> None:
     p.add_argument(
         "--sam3-pos-embed-type",
         type=str,
-        default="sam3",
+        default="act_sinusoidal",
         choices=["sam3", "act_sinusoidal"],
         help="Positional embedding source for SAM3 adapter.",
     )

@@ -56,6 +56,27 @@ def make_vision_encoder(config) -> VisionEncoder:
             use_learned_pos_embed=getattr(c, "use_learned_pos_embed", False),
             use_patch_merge=getattr(c, "use_patch_merge", False),
         )
+    elif vision_type == "sam3":
+        from .sam3 import SAM3VisionEncoder
+        c = config.sam3
+        if c is None:
+            raise ValueError("vision_encoder_type='sam3' requires config.sam3 to be set.")
+        if c.weights is None:
+            raise ValueError("vision_encoder_type='sam3' requires config.sam3.weights (local checkpoint path).")
+        patch_merge_stages = int(getattr(c, "patch_merge_stages", 2))
+        # Legacy boolean: for SAM3, `use_patch_merge=True` means "use the default merge policy" (2 stages).
+        # If users want 0/1/2 explicitly, they should set `patch_merge_stages`.
+        if bool(getattr(c, "use_patch_merge", False)) and not hasattr(c, "patch_merge_stages"):
+            patch_merge_stages = 2
+        vision_encoder = SAM3VisionEncoder(
+            dim_model=int(config.dim_model),
+            weights=str(c.weights),
+            fpn_level=int(getattr(c, "fpn_level", 2)),
+            input_resolution=int(getattr(c, "input_resolution", 1008)),
+            pos_embed_type=str(getattr(c, "pos_embed_type", "sam3")),
+            patch_merge_stages=patch_merge_stages,
+            compile_backbone=bool(getattr(c, "compile_backbone", False)),
+        )
     else:
         raise ValueError(f"Unknown vision_encoder_type: {vision_type}")
 

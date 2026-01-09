@@ -1,72 +1,56 @@
-# NVIDIA NGC PyTorch image (works on both ARM64 and x86_64 with CUDA)
-FROM nvcr.io/nvidia/pytorch:24.10-py3
+# NVIDIA NGC PyTorch image (25.01 uses Python 3.12)
+FROM nvcr.io/nvidia/pytorch:25.01-py3
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    UV_SYSTEM_PYTHON=1 \
+    UV_BREAK_SYSTEM_PACKAGES=1
 
-# Install additional system deps
+# Install additional system deps + uv
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        ffmpeg libgl1 \
-        build-essential cmake git pkg-config \
+        ffmpeg libgl1 build-essential cmake git pkg-config \
         libavcodec-dev libavformat-dev libswscale-dev libavfilter-dev libavdevice-dev && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    pip install uv
 
 WORKDIR /workspace
 
-# Install stable external dependencies first (to maximize caching)
-# We install these BEFORE copying local code so that code changes don't trigger re-installs.
-# We also include "numpy<2" here to ensure all subsequent builds (like decord) use the correct version.
-RUN python -m pip install \
-    "numpy<2" \
-    "safetensors>=0.7.0" \
-    "lerobot>=0.4" \
-    wandb \
-    opencv-python==4.10.0.84 \
-    av \
-    draccus \
-    tqdm \
-    einops \
-    scipy \
-    timm \
-    ftfy \
-    regex \
-    iopath \
-    huggingface_hub \
-    robocandywrapper
+# 1. Create constraints to protect base image packages (exclude torch*/numpy due to version conflicts).
+RUN python3 <<'EOF' > /workspace/constraints.txt
+import importlib.metadata
+for dist in importlib.metadata.distributions():
+    name = dist.metadata.get("Name")
+    if name and any(x in name.lower() for x in ["nvidia", "tensorrt"]) and "torch" not in name.lower():
+        print(f"{name}=={dist.version}")
+EOF
 
-# Build/Install decord from source for arm64, or from pip for amd64
+# 2. Build/Install decord (source for arm64, pip for amd64)
 ARG TARGETARCH
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
         git clone --recursive https://github.com/dmlc/decord.git && \
         cd decord && mkdir build && cd build && \
         cmake .. -DUSE_CUDA=OFF -DCMAKE_BUILD_TYPE=Release && \
         make -j$(nproc) && \
-        cd ../python && python3 setup.py install && \
+        cd ../python && pip install . && \
         cd ../.. && rm -rf decord; \
     else \
-        python -m pip install decord; \
+        uv pip install --system --prerelease=allow -c /workspace/constraints.txt decord; \
     fi
 
-
-# Final fix for binary incompatibility: uninstall pre-built pycocotools and force source-build against numpy<2
-RUN python -m pip uninstall -y pycocotools && \
-    python -m pip install pycocotools --no-binary pycocotools
-
-# Now copy local repository packages
+# 3. Copy and install local packages in editable mode (uv handles resolution).
 COPY sam3 /workspace/sam3
-COPY vision /workspace/vision
+COPY dinov3 /workspace/dinov3
 COPY rewact_tools /workspace/rewact_tools
 COPY lerobot_policy_rewact /workspace/lerobot_policy_rewact
 
-# Install local packages in editable mode WITHOUT dependencies to protect GPU PyTorch
-# This step is last and very fast, so code changes are cheap.
-RUN python -m pip install --no-deps -v -e /workspace/sam3 && \
-    python -m pip install --no-deps -v -e /workspace/vision && \
-    python -m pip install --no-deps -v -e /workspace/rewact_tools && \
-    python -m pip install --no-deps -v -e /workspace/lerobot_policy_rewact
+RUN uv pip install --system --prerelease=allow -c /workspace/constraints.txt \
+    -e /workspace/sam3 \
+    -e /workspace/dinov3 \
+    -e /workspace/rewact_tools \
+    -e /workspace/lerobot_policy_rewact && \
+    pip install --force-reinstall --no-cache-dir pycocotools
 
 WORKDIR /workspace/repo
-
 CMD ["/bin/bash"]

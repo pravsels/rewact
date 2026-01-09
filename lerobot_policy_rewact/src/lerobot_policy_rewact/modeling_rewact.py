@@ -317,11 +317,7 @@ class RewACT(nn.Module):
                 create_sinusoidal_pos_embedding(num_input_token_encoder, config.dim_model).unsqueeze(0),
             )
 
-<<<<<<< HEAD
-        # Vision encoder for image feature extraction.
-=======
         ## Vision encoder (image -> encoder tokens).
->>>>>>> main
         if self.config.image_features:
             self.vision_encoder = make_vision_encoder(config)
 

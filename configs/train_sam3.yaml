@@ -2,13 +2,6 @@
 dataset:
   repo_id:
     - villekuosmanen/build_block_tower
-    - villekuosmanen/dAgger_build_block_tower_1.0.0
-    - villekuosmanen/dAgger_build_block_tower_1.1.0
-    - villekuosmanen/dAgger_build_block_tower_1.2.0
-    - villekuosmanen/dAgger_build_block_tower_1.3.0
-    - villekuosmanen/dAgger_build_block_tower_1.4.0
-    - villekuosmanen/fail_build_block_tower_stationary
-    - villekuosmanen/fail_build_block_tower_autonomous_interaction
   image_transforms:
     enable: true
 
